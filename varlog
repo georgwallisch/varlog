@@ -13,6 +13,7 @@
 # varlog        This init.d script is used to start tmpfs logfile saving and restore.
 #
 
+VERSION=0.4
 
 varlogSave=/var/save.log
 #varlogSave=/media/usbstick/log.save
@@ -197,8 +198,11 @@ case $1 in
 			echo "*** /var/log seems to be mounted as tmpfs!"
 		fi
 	;;
+	version)
+		echo "Varlog Version is ${VERSION}"
+	;;
 	*)
-		echo "Usage: $0 {start|stop|status|forcestart|forcestop}"
+		echo "Usage: $0 {start|stop|status|forcestart|forcestop|version}"
 		exit 1
 	;;
 esac

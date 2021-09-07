@@ -13,8 +13,8 @@
 # varlog        This init.d script is used to start tmpfs logfile saving and restore.
 #
 
-VERSION=0.5 (07.09.2021)
-
+VERSION="0.5 (07.09.2021)"
+DEFAULTSIZE=70M
 varlogSave=/var/save.log
 #varlogSave=/media/usbstick/log.save
 
@@ -103,7 +103,7 @@ function _start() {
 		_save
 		#varlogsize=$(grep /var/log /etc/fstab|awk {'print $4'}|cut -d"=" -f2)
 		 varlogsize=$(grep -oE "/var/log.+size=[0-9]+[MmGgKk]" /etc/fstab | grep -oE "[0-9]+[MmGgKk]$")
-		[ -z "$varlogsize" ] && varlogsize="70M"
+		[ -z "$varlogsize" ] && varlogsize=$DEFAULTSIZE
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Size of tmpfs: {$varlogsize}" 
 		fi

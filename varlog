@@ -13,18 +13,20 @@
 # varlog        This init.d script is used to start tmpfs logfile saving and restore.
 #
 
-VERSION="0.5 (07.09.2021)"
-DEFAULTSIZE=70M
-varlogSave=/var/save.log
-#varlogSave=/media/usbstick/log.save
-
-[ ! -d $varlogSave ] && mkdir -p $varlogSave
-PATH=/sbin:/usr/sbin:/bin:/usr/bin
-
+VERSION="0.6 (14.04.2023)"
+VARLOGCONFIG=/etc/varlog.conf
+TMPFSSIZE=70M
+VARLOGSAVEDIR=/var/save.log
 VERBOSE=0
 RSPARAM="-a"
 CPPARAM="-Rpu"
-APACHE2=0
+PATH=/sbin:/usr/sbin:/bin:/usr/bin
+FORCESTOP=1
+
+if [ $(id -u) -ne 0 ]; then
+	echo -e "Script must be run as root. Try 'sudo $0'\n"
+	exit 1
+fi
 
 if [ "$1" == "-v" ]; then
 	VERBOSE=1
@@ -39,35 +41,53 @@ if [ "$2" == "-v" ]; then
 	CPPARAM="-vRpu"
 fi
 
-if [ ! -d "$varlogSave" ]; then
+if [ -x $VARLOGCONFIG ]; then
 	if [ $VERBOSE -gt 0 ]; then
-		echo "${varlogSave} does not exist. Creating..." 
+		echo "Using config file ${VARLOGCONFIG}";
 	fi
-	mkdir -p $varlogSave
-	if [ ! -d "$varlogSave" ]; then
-		echo "ERROR: Could not create ${varlogSave} !"
+	source $VARLOGCONFIG
+fi
+
+if [ ! -d $VARLOGSAVEDIR ]; then
+	if [ $VERBOSE -gt 0 ]; then
+		echo -e "*** Varlog save dir does not exist!\n*** Creating ${VARLOGSAVEDIR} .." 
+	fi
+	mkdir -p $VARLOGSAVEDIR
+fi
+
+APACHE2=0
+
+
+
+if [ ! -d "$VARLOGSAVEDIR" ]; then
+	if [ $VERBOSE -gt 0 ]; then
+		echo "${VARLOGSAVEDIR} does not exist. Creating..." 
+	fi
+	mkdir -p $VARLOGSAVEDIR
+	if [ ! -d "$VARLOGSAVEDIR" ]; then
+		echo "ERROR: Could not create ${VARLOGSAVEDIR} !"
 		exit 1
 	else
 		if [ $VERBOSE -gt 0 ]; then
-			echo "${varlogSave} created successfully." 
+			echo "${VARLOGSAVEDIR} created successfully." 
 		fi
 	fi
 fi
 
 function _save() {
 	if [ $VERBOSE -gt 0 ]; then
-		echo "*** Starting to save /var/log into ${varlogSave}" 
+		echo "*** Starting to save /var/log into ${VARLOGSAVEDIR}" 
 	fi
 	if [ -x "$(which rsync)" ]; then
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Using rsync command" 
 		fi
-		rsync $RSPARAM --delete /var/log/ ${varlogSave}
+		rsync $RSPARAM --delete /var/log/ ${VARLOGSAVEDIR}
 	else
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Using cp command" 
 		fi
-		cp $CPPARAM /var/log/* ${varlogSave}/
+		cp $CPPARAM /var/log/* ${VARLOGSAVEDIR}/
 	fi
 	sync
 	if [ $VERBOSE -gt 0 ]; then
@@ -77,18 +97,18 @@ function _save() {
 
 function _restore() {
 	if [ $VERBOSE -gt 0 ]; then
-		echo "*** Starting to restore /var/log from ${varlogSave}" 
+		echo "*** Starting to restore /var/log from ${VARLOGSAVEDIR}" 
 	fi
 	if [ -x "$(which rsync)" ]; then
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Using rsync command" 
 		fi
-		rsync $RSPARAM -u --delete ${varlogSave}/ /var/log
+		rsync $RSPARAM -u --delete ${VARLOGSAVEDIR}/ /var/log
 	else
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Using cp command" 
 		fi
-		cp $CPPARAM ${varlogSave}/* /var/log/
+		cp $CPPARAM ${VARLOGSAVEDIR}/* /var/log/
 	fi
 	sync
 	if [ $VERBOSE -gt 0 ]; then
@@ -103,7 +123,7 @@ function _start() {
 		_save
 		#varlogsize=$(grep /var/log /etc/fstab|awk {'print $4'}|cut -d"=" -f2)
 		 varlogsize=$(grep -oE "/var/log.+size=[0-9]+[MmGgKk]" /etc/fstab | grep -oE "[0-9]+[MmGgKk]$")
-		[ -z "$varlogsize" ] && varlogsize=$DEFAULTSIZE
+		[ -z "$varlogsize" ] && varlogsize=$TMPFSSIZE
 		if [ $VERBOSE -gt 0 ]; then
 			echo "*** Size of tmpfs: {$varlogsize}" 
 		fi
@@ -113,7 +133,7 @@ function _start() {
 	else
 		echo "*** /var/log already mounted as tmpfs!"
 		if [ -n "$1" ]; then
-			echo "*** forcing restore from ${varlogSave}"
+			echo "*** forcing restore from ${VARLOGSAVEDIR}"
 			_restore
 		fi
 	fi	
@@ -129,13 +149,15 @@ function _stop() {
 		umount -f /var/log/
 		if [ -z "$(grep /var/log /proc/mounts)" ]; then
 			echo "*** /var/log unmounted successfully"
+			_restore
 		else
 			echo "*** ERROR: /var/log still mounted!"
-			if [ -n "$1" ]; then
+			if [ $1 -gt 0 ]; then
 				echo "*** Try to unmount lazy."
 				umount -l /var/log/
 				if [ -z "$(grep /var/log /proc/mounts)" ]; then
 					echo "*** /var/log unmounted successfully FINALLY!"
+					_restore
 				else
 					echo "*** /var/log STILL mounted! This should not happen!"
 				fi
@@ -188,20 +210,27 @@ case $1 in
 	;;
 	stop)
 		_stop_apache2
-		_stop ""
+		_stop ${FORCESTOP}
 		_start_apache2
 	;;
 	forcestop)
 		_stop_apache2
-		_stop "force"
+		_stop 1
 		_start_apache2
 	;;
 	status)
+		if [ $VERBOSE -gt 0 ]; then
+			echo "Path to save log into is ${VARLOGSAVEDIR}";
+			echo "TMPFS Size is set to ${TMPFSSIZE}";
+			if [ $FORCESTOP -gt 0 ]; then
+				echo "FORCESTOP is set true. Will try to lazy unmount if necessary..";
+			fi
+		fi
 		if [ -z "$(grep /var/log /proc/mounts)" ]; then
 			echo "*** /var/log is NOT mounted as tmpfs!"
 		else
 			echo "*** /var/log seems to be mounted as tmpfs!"
-		fi
+		fi		
 	;;
 	version)
 		echo "Varlog Version is ${VERSION}"
